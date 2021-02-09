@@ -1,29 +1,23 @@
 const moment = require('moment-timezone')
+const C = require('./lib/constants')
+const api = require('./lib/api')
+const { getMidPrice, normalisePrice, removeCurrentCandle } = require('./lib/price')
+const offers = require('./lib/offers.json')
+
 moment.tz.setDefault('UTC')
 
-const API = require('./lib/API')
-const { getMidPrice } = require('./lib/math')
-const { timeframes, markets } = require('./lib/config')
-const C = require('./lib/constants')
+const GET = 'GET'
 
 class FXCM {
-
-  constructor(params) {
-    const { token, isDemo } = params
-    this.fxcm = new API(token, isDemo)
-  }
-
-  static removeCurrentCandle(data) {
-    const sortedData = data.sort((oldest, newest) => moment(oldest.timestamp).diff(moment(newest.timestamp)))
-    sortedData.pop()
-    return sortedData
+  constructor({ token, isDemo }) {
+    this.fxcm = api({ token, isDemo })
+    this.loggedIn = false
   }
 
   async initialise() {
     if (!this.loggedIn) {
       try {
-        await this.ig.login(this.username, this.password)
-        this.loggedIn = true
+        this.loggedIn = await this.fxcm.authenticate()
       } catch (error) {
         console.error('Error with fxcm initialise', error)
       }
@@ -32,171 +26,97 @@ class FXCM {
 
   async logout() {
     if (this.loggedIn) {
-      await this.ig.logout()
+      await this.fxcm.logout()
       this.loggedIn = false
-    }
-  }
-
-  async createPosition(createObj) {
-    await this.initialise()
-    try {
-      return this.ig.post('positions/otc', 2, createObj)
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
-  async editPosition(dealId, editObj) {
-    await this.initialise()
-    try {
-      return this.ig.put(`positions/otc/${dealId}`, 2, editObj)
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
-  async closePosition(closeObj) {
-    await this.initialise()
-    try {
-      return this.ig.delete('positions/otc', 1, closeObj)
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
-  async currentPositions() {
-    await this.initialise()
-    try {
-      const positionsObj = await this.ig.get('positions', 2)
-      return positionsObj.positions
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
-  async historical({ pair, timeframe, datapoints = 1 }) {
-    try {
-      await this.initialise()
-      const [{ epic }] = markets.filter(market => market.instrumentName === pair && market.epic)
-      if (!epic || timeframes.indexOf(timeframe) === -1) {
-        console.error(`Issue with epic: '${epic}' or timeframe no found: '${timeframe}'`)
-        return []
-      }
-
-      // const pricesObj = await this.ig.get(`prices/${epic}/${timeframe}/${datapoints + 1}`, 2)
-      const pricesObj = await this.ig.get(`prices/${epic}?resolution=${timeframe}&max=${datapoints+1}&pageSize=${datapoints+1}`, 3)
-
-      const { prices, metadata: { allowance }} = pricesObj
-      const { remainingAllowance, totalAllowance, allowanceExpiry } = allowance
-      const formattedExpiry = (moment.duration(allowanceExpiry, 'seconds').asDays()).toFixed(1)
-
-      console.log(`[${pair}] Prices Length: ${prices.length} IG Allowance: ${remainingAllowance} (Remaining) ${totalAllowance} (Total) ${formattedExpiry} Days (Expiry)`)
-
-      if (!prices || prices.length === 0) throw new Error(`Error with IG response - returned prices: ${prices}`)
-
-      const formattedPrices = prices.map(price => {
-        const close = getMidPrice(price.closePrice.bid, price.closePrice.ask)
-        const open = getMidPrice(price.openPrice.bid, price.openPrice.ask)
-        const mid = getMidPrice(open, close)
-
-        const snapshotTimeUTC = moment(price.snapshotTimeUTC, 'YYYY-MM-DD[T]HH:mm:ss')
-
-        return {
-          id: C.historicalID({ pair, timeframe }),
-          timestamp: snapshotTimeUTC.unix(),
-          datetime: snapshotTimeUTC.format(C.DATETIME_FORMAT),
-          close,
-          open,
-          mid,
-          high: getMidPrice(price.highPrice.bid, price.highPrice.ask),
-          low: getMidPrice(price.lowPrice.bid, price.lowPrice.ask)
-        }
-      })
-      return FXCM.removeCurrentCandle(formattedPrices)
-
-    } catch (error) {
-      console.error(`Error with pair: ${pair}. ${error}`)
-    }
-  }
-
-  async market(epic) {
-    await this.initialise()
-    try {
-      return this.ig.get(`markets/${epic}`, 2)
-    } catch (error) {
-      console.error(error)
     }
   }
 
   async markets() {
     await this.initialise()
     try {
-      const epics = markets.map(m => m.epic).join(',')
-      const marketsObj = await this.ig.get('markets', 2, { epics })
-      const { marketDetails } = marketsObj
-      if(!marketDetails) {
-        console.log(`NO marketDetails found, full markets response = ${JSON.stringify(marketsObj)}`)
+      const response = await this.fxcm.request(GET, '/trading/get_model', { models: ['Offer'] })
+
+      if (!response || !response.offers) {
+        console.log('ERROR - No Market Offers returned from API')
+        return []
       }
-      const dateUpdated = moment().format(C.DATE_FORMAT)
 
-      return marketDetails.map(offer => {
+      return response.offers.map(({
+        time,
+        buy,
+        sell,
+        spread,
+        currency
+      }) => {
+        const dateTimeMoment = moment(time, moment.ISO_8601)
 
-        const updateTimeUTC = moment(offer.snapshot.updateTime, 'HH:mm:ss')
+        const currentPrice = normalisePrice({
+          pair: currency,
+          price: getMidPrice(buy, sell)
+        })
 
         return {
-          currency: offer.instrument.name,
-          currentPrice: getMidPrice(offer.snapshot.bid, offer.snapshot.offer),
-          timeUpdated: updateTimeUTC.format(C.TIME_FORMAT),
-          dateUpdated,
-          timestamp: moment(`${dateUpdated} / ${updateTimeUTC.format('HH:mm:ss')}`, C.DATETIME_FORMAT).unix()
+          currentPrice,
+          currency,
+          spread,
+          timeUpdated: dateTimeMoment.format(C.TIME_FORMAT),
+          dateUpdated: dateTimeMoment.format(C.DATE_FORMAT),
+          timestamp: dateTimeMoment.unix()
         }
+      })
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  async historical({ pair, timeframe = 'm30', datapoints = 1 }) {
+    await this.initialise()
+    try {
+      const { offerId } = offers.find(offer => offer.currency === pair && offer.offerId)
+
+      if (!offerId || C.TIMEFRAMES.indexOf(timeframe) === -1) {
+        console.error(`Timeframe: '${timeframe}' or Pair: '${pair}' not found`)
+        return []
       }
-      )
-    } catch (error) {
-      console.error(error)
-    }
-  }
 
-  async searchMarkets(searchTerm) {
-    await this.initialise()
-    try {
-      const { markets } = await this.ig.get('markets', 1, { searchTerm })
-      return markets
-    } catch (error) {
-      console.error(error)
-    }
-  }
+      const { response, candles } = await this.fxcm.request(GET, `/candles/${offerId}/${timeframe}`, { num: datapoints + 1 })
 
-  async activity({ minutesAgo }) {
-    await this.initialise()
-    const past = moment().subtract(minutesAgo, 'minutes')
-    const lastPeriod = moment().diff(past)
-    try {
-      const { activities } = await this.ig.get(`history/activity/${lastPeriod}`, 1)
-      return activities
-    } catch (error) {
-      console.error(error)
-    }
-  }
+      if (response.error !== '' || candles.length === 0) throw new Error(`Error with historical response - returned candles: ${candles}`)
 
-  async transactions({ minutesAgo }) {
-    await this.initialise()
-    const past = moment().subtract(minutesAgo, 'minutes')
-    const lastPeriod = moment().diff(past)
-    try {
-      const { transactions } = await this.ig.get(`history/transactions/ALL_DEAL/${lastPeriod}`, 1)
-      return transactions
-    } catch (error) {
-      console.error(error)
-    }
-  }
+      const formattedPrices = candles.map(price => {
+        const [
+          timestamp,
+          bidOpen,
+          bidClose,
+          bidHigh,
+          bidLow,
+          askOpen,
+          askClose,
+          askHigh,
+          askLow
+        ] = price
 
-  async confirm({ dealReference }) {
-    await this.initialise()
-    try {
-      return await this.ig.get(`/confirms/${dealReference}`, 1)
+        const close = getMidPrice(bidClose, askClose)
+        const open = getMidPrice(bidOpen, askOpen)
+        const mid = getMidPrice(open, close)
+        const high = getMidPrice(bidHigh, askHigh)
+        const low = getMidPrice(bidLow, askLow)
+
+        return {
+          id: C.historicalID({ pair, timeframe }),
+          timestamp,
+          datetime: moment.unix(timestamp).format(C.DATETIME_FORMAT),
+          close: normalisePrice({ pair, price: close }),
+          open: normalisePrice({ pair, price: open }),
+          mid: normalisePrice({ pair, price: mid }),
+          high: normalisePrice({ pair, price: high }),
+          low: normalisePrice({ pair, price: low }),
+        }
+      })
+      return removeCurrentCandle(formattedPrices)
+
     } catch (error) {
-      console.error(error)
+      console.error(`Error with pair: ${pair}. ${error}`)
     }
   }
 }
