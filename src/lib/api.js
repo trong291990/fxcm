@@ -75,23 +75,23 @@ function api({ token, isDemo }) {
         access_token: token
       })
     });
-    // fired when socket.io connects with no errors
+
     socket.on('connect', () => {
       console.log('Socket.IO session has been opened: ', socket.id);
       requestHeaders.Authorization = 'Bearer ' + socket.id + token;
       resolve(requestHeaders)
     });
-    // fired when socket.io cannot connect (network errors)
+
     socket.on('connect_error', (error) => {
       console.log('Socket.IO session connect error: ', error);
       resolve()
     });
-    // fired when socket.io cannot connect (login errors)
+
     socket.on('error', (error) => {
       console.log('Socket.IO session error: ', error);
       resolve()
     });
-    // fired when socket.io disconnects from the server
+
     socket.on('disconnect', () => {
       console.log('Socket disconnected, terminating client.');
       process.exit(-1);
