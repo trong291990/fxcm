@@ -31,7 +31,7 @@ const config = {
 
 const fxcm = new FXCM(config)
 
-// Get 30min Historical Candle data for USD/CAD. Max 50 data points (Live/current candle ios removed)
+// Get 30min Historical Candle data for USD/CAD. Max 50 data points (Live/current candle is removed by default)
 fxcm.historical({ pair: 'USD/CAD', timeframe = 'm30', datapoints = 50 })
   .then((data) => {
     console.log(JSON.stringify(data))
