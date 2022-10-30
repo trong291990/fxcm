@@ -102,20 +102,20 @@ class FXCM {
         const low = getMidPrice(bidLow, askLow)
 
         return {
-          id: C.historicalID({ pair, timeframe }),
+          id: offerId,
           timestamp,
           datetime: moment.unix(timestamp).format(C.DATETIME_FORMAT),
-          close: normalisePrice({ pair, price: close }),
-          open: normalisePrice({ pair, price: open }),
-          mid: normalisePrice({ pair, price: mid }),
-          high: normalisePrice({ pair, price: high }),
-          low: normalisePrice({ pair, price: low }),
+          close: close,
+          open: open,
+          mid: mid,
+          high: high,
+          low: low,
         }
       })
       return removeCurrentCandle(formattedPrices)
 
     } catch (error) {
-      console.error(`Error with pair: ${pair}. ${error}`)
+      console.error(`Error ${error}`)
     }
   }
 }
