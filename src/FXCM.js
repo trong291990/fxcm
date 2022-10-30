@@ -69,12 +69,11 @@ class FXCM {
     }
   }
 
-  async historical({ pair, timeframe = 'm30', datapoints = 1 }) {
+  async historical({ offerId, timeframe = 'm30', datapoints = 1 }) {
     await this.initialise()
-    try {
-      const { offerId } = offers.find(offer => offer.currency === pair && offer.offerId)
+    try 
 
-      if (!offerId || C.TIMEFRAMES.indexOf(timeframe) === -1) {
+      if (C.TIMEFRAMES.indexOf(timeframe) === -1) {
         console.error(`Timeframe: '${timeframe}' or Pair: '${pair}' not found`)
         return []
       }
