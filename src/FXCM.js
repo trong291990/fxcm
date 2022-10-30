@@ -71,7 +71,7 @@ class FXCM {
 
   async historical({ offerId, timeframe = 'm30', datapoints = 1 }) {
     await this.initialise()
-    try 
+    try {
 
       if (C.TIMEFRAMES.indexOf(timeframe) === -1) {
         console.error(`Timeframe: '${timeframe}' or Pair: '${pair}' not found`)
